@@ -1,0 +1,216 @@
+####VGG8 모델
+import tensorflow as tf
+import time
+import os
+import numpy as np
+import cv2
+import csv
+import matplotlib.pyplot as plt
+import random
+%matplotlib inline
+
+def image_load(image):        
+    file_list = os.listdir(image)     
+    image_list = np.array( [cv2.imread(str(image)+str(k)) for k in file_list] )   
+    return image_list
+
+def  label_load(path):
+    file = open(path)
+    labeldata = csv.reader(file)
+    labellist = []
+    for  i  in  labeldata:
+        labellist.append(i) 
+    label = np.array(labellist)
+    label = label.astype(int)
+    label = np.eye(2)[label]
+    return label.reshape(-1,2) 
+
+def shuffle_batch(data1, data2):
+    a = np.arange(len(data1))
+    random.shuffle(a)
+    return data1[a], data2[a]
+
+
+def next_batch(data1,data2,init,fin):
+    return data1[init:fin], data2[init:fin]
+
+
+train_image = 'D:\\Downloads\\rsna-pneumonia-detection-challenge\\train4500\\'
+train_label = 'D:\\Downloads\\rsna-pneumonia-detection-challenge\\label4500.csv'
+test_image =  'D:\\Downloads\\rsna-pneumonia-detection-challenge\\100\\'
+test_label = 'D:\\Downloads\\rsna-pneumonia-detection-challenge\\label100.csv'
+
+print("LOADING DATA")
+
+trainX = image_load(train_image)
+print(trainX.shape)  #(4500, 32, 32, 3)
+trainY = label_load(train_label)
+print(trainY.shape) #(4500, 2)
+testX = image_load(test_image)
+print(testX.shape) # (500, 32, 32, 3)
+testY = label_load(test_label)
+print(testY.shape)# (500, 2)
+
+################################################################################################
+
+#입력층
+x = tf.placeholder("float",[None, 32, 32, 3]) 
+x = tf.reshape(x,[-1, 32, 32, 3] )  # -1 -> 4500
+
+
+#conv1
+b1 = tf.Variable(tf.ones([128]))
+W1 = tf.Variable(tf.random_normal([3,3,3,128],stddev = 0.01))
+y1 = tf.nn.conv2d(x, W1, strides=[1,1,1,1], padding = 'SAME')
+y1 = y1 + b1
+y1 = tf.nn.relu(y1)
+W1_2 = tf.Variable(tf.random_normal([3,3,128,128], stddev = 0.01))
+y1_2 = tf.nn.conv2d(y1, W1_2, strides=[1,1,1,1], padding = 'SAME')
+y1 = tf.nn.max_pool(y1_2, ksize = [1,2,2,1], strides = [1,2,2,1], padding = 'SAME') #16
+
+# 배치정규화
+y1 = tf.contrib.layers.batch_norm(y1,scale=True)
+
+#conv2
+b2 = tf.Variable(tf.ones([256]))
+W2 = tf.Variable(tf.random_normal([3,3,128,256],stddev = 0.01))
+y2 = tf.nn.conv2d(y1, W2, strides=[1,1,1,1], padding = 'SAME')
+y2 = y2 + b2
+y2 = tf.nn.relu(y2)
+W2_2 = tf.Variable(tf.random_normal([3,3,256,256],stddev = 0.01))
+y2_2 = tf.nn.conv2d(y2, W2_2, strides=[1,1,1,1], padding = 'SAME')
+y2 = tf.nn.max_pool(y2_2, ksize = [1,2,2,1], strides = [1,2,2,1], padding = 'SAME') #8
+
+y2 = tf.contrib.layers.batch_norm(y2,scale=True)
+
+#conv3
+b3 = tf.Variable(tf.ones([512]))
+W3 = tf.Variable(tf.random_normal([3,3,256,512],stddev = 0.01))
+y3 = tf.nn.conv2d(y2, W3, strides=[1,1,1,1], padding = 'SAME')
+y3 = y3 + b3
+y3 = tf.nn.relu(y3)
+W3_2 = tf.Variable(tf.random_normal([3,3,512,512],stddev = 0.01))
+y3_2 = tf.nn.conv2d(y3, W3_2, strides=[1,1,1,1], padding = 'SAME')
+y3 = tf.nn.max_pool(y3_2, ksize = [1,2,2,1], strides = [1,2,2,1], padding = 'SAME') #4*4*512
+
+y3 = tf.contrib.layers.batch_norm(y3,scale=True)
+
+
+#fC1
+b4 = tf.Variable(tf.ones([1024]))
+W4 = tf.get_variable(name='W4', shape=[4*4*512, 1024], initializer=tf.contrib.layers.variance_scaling_initializer())
+y4 = tf.reshape(y3, [-1, 4*4*512])
+y4 = tf.matmul(y4,W4) + b4
+y4 = tf.nn.relu(y4)
+y4 = tf.contrib.layers.batch_norm(y4,True)
+
+# 배치정규화 코드
+batch_x1 = tf.contrib.layers.batch_norm(y4, True)
+y4 = tf.nn.relu(batch_x1)  # relu 활성화 함수 사용
+
+#드롭아웃
+keep_prob = tf.placeholder("float")
+y4_drop = tf.nn.dropout(y4, keep_prob)
+
+#fc2
+b5 = tf.Variable(tf.ones([1024]))
+W5 = tf.get_variable(name='W5', shape=[1024, 1024], initializer=tf.contrib.layers.variance_scaling_initializer()) # he 초기값
+y5 = tf.matmul(y4_drop,W5) + b5
+y5 = tf.contrib.layers.batch_norm(y5,True)
+
+#출력층
+b6 = tf.Variable(tf.ones([2]))  
+W6 = tf.get_variable(name='W6', shape=[1024, 2], initializer=tf.contrib.layers.variance_scaling_initializer()) # he 초기값
+y6 = tf.matmul(y5,W6) + b6
+y6 = tf.contrib.layers.batch_norm(y6,True)
+y_hat = tf.nn.softmax(y6)  #(100,10)
+
+################################################################################################
+
+#예측값
+y_predict = tf.argmax(y_hat,1)
+
+
+# 라벨을 저장하기 위한 변수 생성
+y_onehot = tf.placeholder("float",[None,2])  # y_onehot 에다가 train label을 담는다.
+y_label = tf.argmax(y_onehot, axis = 1)
+
+
+# 정확도를 출력하기 위한 변수 생성
+correct_prediction = tf.equal(y_predict, y_label)  # predict == label
+accuracy = tf.reduce_mean(tf.cast(correct_prediction,"float"))  ## True, False 값을 cast로 1,0 뽑아서 출력
+
+
+# 교차 엔트로피 오차 함수
+cross_entropy = -tf.reduce_sum(y_onehot * tf.log(y_hat), axis = 1)
+
+
+# SGD 경사 감소법
+# optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.05)
+
+
+# Adam 경사 감소법
+optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
+
+
+# 학습 오퍼레이션 정의
+train = optimizer.minimize(cross_entropy)
+
+
+# 변수 초기화
+init = tf.global_variables_initializer()
+train_acc_list = [0]
+test_acc_list = [0]
+train_loss_list = [2]
+
+epoch = 10
+with tf.Session() as sess:
+    sess.run(init)
+    for i in range(45*epoch):                
+        (train_xs, train_ys) = shuffle_batch(trainX, trainY)
+        (test_xs, test_ys) = (testX, testY)
+        train_xs, train_ys = next_batch(train_xs, train_ys, 0, 100) 
+        sess.run(train,feed_dict={x:train_xs, y_onehot:train_ys, keep_prob:0.9})
+        
+        
+        train_loss = min( sess.run(cross_entropy,feed_dict={x:train_xs, y_onehot:train_ys, keep_prob:0.9})) 
+        train_loss_list.append(train_loss)
+        #print("min:",train_loss_list[-1])
+        
+        
+        if i%45==0: # 45번 마다 정확도 출력(1에폭 끝나는 점)
+            test_xs, test_ys = next_batch(test_xs, test_ys, 0, 100) 
+            train_acc_list.append(sess.run(accuracy,feed_dict={x:train_xs, y_onehot:train_ys, keep_prob:1.0}))
+            test_acc_list.append(sess.run(accuracy,feed_dict={x:test_xs, y_onehot:test_ys, keep_prob:1.0}))   
+                        
+            print("train %d/%s 에폭 정확도 %.2f" %(i//45+1,str(epoch), train_acc_list[-1]), end="\t")      
+    print("============================================================")        
+    print("\ntest Total %d 에폭 정확도 %.2f" %(i//45+1,test_acc_list[-1]))
+    print("\nHighest Loss", max(train_loss_list))
+    print("\nLowest Loss", min(train_loss_list))
+    print("\nLast Epoch Loss", train_loss_list[-1])
+
+# 테스트가 100장 밖에 없어서 for문으로 여러번 돌릴 필요가 없다.
+#마지막에 한번 나오면 됨.
+
+markers = {'train': 'o', 'test': 's'}
+x = np.arange(len(train_acc_list))
+plt.plot()
+plt.plot(x, train_acc_list, label='train acc')
+plt.plot(x, test_acc_list, label='test acc', linestyle='--')
+plt.xlabel("epochs")
+plt.ylabel("accuracy")
+plt.ylim(min(min(train_acc_list),min(test_acc_list))-0.1, 1.1)
+plt.legend(loc='lower right')
+plt.show()
+
+
+markers = {'train': 'o', 'test': 's'}
+x = np.arange(len(train_loss_list))
+plt.plot(x, train_loss_list, label='train loss')  #정확도 plot 그래프 그림
+#plt.plot(x, train_loss_list, label='test loss', linestyle='--') 
+plt.xlabel("epochs")
+plt.ylabel("loss")
+plt.ylim(0, 2.0)   # 정확도와 다르게 범위 좀더 넓게 보려고
+plt.legend(loc='upper right')   #아래에 있으면 자료 가려서
+plt.show()
